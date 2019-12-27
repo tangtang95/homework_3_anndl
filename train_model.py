@@ -25,7 +25,7 @@ if __name__ == '__main__':
                                                                                        tokenizer=tokenizer,
                                                                                        split_seed=seed)
     model = ConvRecurrentNetwork().get_model(100, tokenizer.get_wtoi(), img_h=img_h, img_w=img_w, seed=seed)
-    model.fit(x=train_dataset, epoch=5, steps_per_epoch=math.ceil(train_samples/batch_size),
+    model.fit(x=train_dataset, epochs=5, steps_per_epoch=math.ceil(train_samples/batch_size),
               validation_data=valid_dataset, validation_steps=math.ceil(valid_samples/batch_size))
 
     test_questions_path = os.path.join(dataset_vqa_path, "test_data.json")
