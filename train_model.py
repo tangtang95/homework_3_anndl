@@ -1,6 +1,7 @@
 from src.data.CustomDataset import read_train_valid_data, read_test_data
 import os
 import math
+import tensorflow as tf
 
 from src.data.CustomTokenizer import CustomTokenizer
 from src.model.models import ConvRecurrentNetwork
@@ -12,6 +13,8 @@ if __name__ == '__main__':
     batch_size = 32
     img_h = 480
     img_w = 320
+    epochs = 5
+    tf.random.set_seed(seed)
 
     data_path = "data/"
     dataset_vqa_path = os.path.join(data_path, "dataset_vqa")
@@ -25,7 +28,7 @@ if __name__ == '__main__':
                                                                                        tokenizer=tokenizer,
                                                                                        split_seed=seed)
     model = ConvRecurrentNetwork().get_model(100, tokenizer.get_wtoi(), img_h=img_h, img_w=img_w, seed=seed)
-    model.fit(x=train_dataset, epochs=5, steps_per_epoch=math.ceil(train_samples/batch_size),
+    model.fit(x=train_dataset, epochs=epochs, steps_per_epoch=math.ceil(train_samples/batch_size),
               validation_data=valid_dataset, validation_steps=math.ceil(valid_samples/batch_size))
 
     test_questions_path = os.path.join(dataset_vqa_path, "test_data.json")

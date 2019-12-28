@@ -53,7 +53,7 @@ class CustomTrainValidGenerator(object):
         self.image_directory = image_directory
         self.rescale_image = rescale_image
 
-    def _dataset(self, questions_list, batch_size):
+    def _dataset(self, questions_list, batch_size, do_shuffle=False):
 
         def process_image_filenames(image_filename):
             image_filepath = tf.strings.unicode_encode(image_filename, output_encoding='UTF-8')
@@ -85,13 +85,15 @@ class CustomTrainValidGenerator(object):
         image_dataset = image_dataset.map(process_image_filenames, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
         dataset = tf.data.Dataset.zip(((question_dataset, image_dataset), label_dataset))
+        if do_shuffle:
+            dataset = dataset.shuffle(buffer_size=batch_size*5)
         dataset = dataset.batch(batch_size)
         dataset = dataset.prefetch(1)
         dataset = dataset.repeat()
         return dataset
 
     def get_train_dataset(self, batch_size):
-        return self._dataset(self.train_questions_list, batch_size)
+        return self._dataset(self.train_questions_list, batch_size, do_shuffle=True)
 
     def get_valid_dataset(self, batch_size):
         return self._dataset(self.valid_questions_list, batch_size)
