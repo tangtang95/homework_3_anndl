@@ -53,7 +53,7 @@ class CustomTrainValidGenerator(object):
         self.image_directory = image_directory
         self.rescale_image = rescale_image
 
-    def _dataset(self, questions_list, batch_size, do_shuffle=False):
+    def _dataset(self, questions_list, batch_size, do_shuffle=True):
 
         def process_image_filenames(image_filename):
             image_filepath = tf.strings.unicode_encode(image_filename, output_encoding='UTF-8')
