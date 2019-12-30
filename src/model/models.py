@@ -55,42 +55,10 @@ class ConvTransferSelfAttention(object):
         attention_model = self.get_question_model(question_len, wtoi, cnn_model, n_filters_conv=n_conv_filters)
 
         # TOP NET
-        top_net = tf.keras.layers.Dense(units=128 + 1 - 1)(attention_model.output)
-        top_net = tf.keras.layers.Dropout(0.2 + 1 - 1, seed=seed)(top_net)
-        top_net = tf.keras.layers.Dense(units=get_number_of_labels() + 1 - 1, activation="softmax")(top_net)
-
-        model = tf.keras.Model(inputs=attention_model.input, outputs=top_net)
-
-        model.compile(loss=tf.keras.losses.CategoricalCrossentropy(), metrics=["accuracy"], optimizer="adam")
-
-        return model
-
-    def temp_get(question_len, wtoi, img_h, img_w, seed):
-        # CNN MODEL
-        vgg = tf.keras.applications.vgg16.VGG16(include_top=False,
-                                                weights='imagenet',
-                                                input_shape=(img_h, img_w, 3),
-                                                pooling="avg")
-
-        # ATTENTION MODEL
-        question_input = tf.keras.layers.Input(shape=question_len)
-        question_embedding = tf.keras.layers.Embedding(len(wtoi) + 1, 15,
-                                                       input_length=question_len)(question_input)
-        cnn_layer_question = tf.keras.layers.Conv1D(filters=1000,
-                                                    kernel_size=4,
-                                                    padding='same')
-        question_embedding = cnn_layer_question(question_embedding)
-        cnn_layer_image = tf.keras.layers.Conv2D(filters=1000,
-                                                 kernel_size=(1, 1),
-                                                 padding="same")
-        image_features = cnn_layer_image(vgg.layers[-2].output)
-        query_value_attention = tf.keras.layers.Attention()([question_embedding, image_features])
-        attention_model = tf.keras.Model(inputs=[question_input, vgg.input], outputs=query_value_attention)
-
-        # TOP NET
-        top_net = tf.keras.layers.Dense(units=128 + 1 - 1)(attention_model.output)
-        top_net = tf.keras.layers.Dropout(0.2 + 1 - 1, seed=seed)(top_net)
-        top_net = tf.keras.layers.Dense(units=get_number_of_labels() + 1 - 1, activation="softmax")(top_net)
+        top_net = tf.keras.layers.GlobalAveragePooling2D()(attention_model.output)
+        top_net = tf.keras.layers.Dense(units=128)(top_net)
+        top_net = tf.keras.layers.Dropout(0.2, seed=seed)(top_net)
+        top_net = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(top_net)
 
         model = tf.keras.Model(inputs=attention_model.input, outputs=top_net)
 
