@@ -5,33 +5,75 @@ from datetime import datetime
 from src.data.CustomDataGenerator import get_number_of_labels
 
 
+def _get_transfer_model_(img_h, img_w, application_name, fine_tuning):
+    if application_name == "vgg16":
+        model = tf.keras.applications.vgg16.VGG16(include_top=False,
+                                                  weights='imagenet',
+                                                  input_shape=(img_h, img_w, 3),
+                                                  pooling="avg")
+    elif application_name == "resnet50v2":
+        model: tf.keras.Model = tf.keras.applications.resnet_v2.ResNet50V2(include_top=False, weights='imagenet',
+                                                                           input_shape=(img_h, img_w, 3),
+                                                                           pooling="avg")
+    elif application_name == "inceptionresnetv2":
+        model = tf.keras.applications.inception_resnet_v2.InceptionResNetV2(include_top=False, weights='imagenet',
+                                                                            input_shape=(img_h, img_w, 3),
+                                                                            pooling="avg")
+    else:
+        raise NotImplemented("Transfer from {} model is not implemented.".format(application_name))
+
+    if not fine_tuning:
+        model.trainable = False
+
+    return model
+
+
+class TransferBidirectionalGRU(object):
+
+    def __init__(self, embedding_size=25):
+        self.EMBEDDING_SIZE = embedding_size
+
+    def get_image_model(self, img_h, img_w, application_name="vgg16", fine_tuning=True):
+        return _get_transfer_model_(img_w=img_w, img_h=img_h, application_name=application_name,
+                                    fine_tuning=fine_tuning)
+
+    def get_question_model(self, question_len, wtoi, n_units):
+        # ATTENTION MODEL
+        question_input = tf.keras.layers.Input(shape=question_len)
+        question_embedding = tf.keras.layers.Embedding(len(wtoi) + 1, self.EMBEDDING_SIZE,
+                                                       input_length=question_len)(question_input)
+        bidirectional = tf.keras.layers.Bidirectional(tf.keras.layers.GRU(units=n_units,
+                                                                          return_state=False,
+                                                                          unroll=True,
+                                                                          ))(question_embedding)
+        bidirectional_model = tf.keras.Model(inputs=question_input, outputs=bidirectional)
+        return bidirectional_model
+
+    def get_model(self, question_len, wtoi, img_h, img_w, seed, n_units=512):
+        cnn_model = self.get_image_model(img_h, img_w)
+        question_model = self.get_question_model(question_len, wtoi, n_units=n_units)
+
+        model = tf.keras.layers.concatenate([cnn_model.output, question_model.output])
+        model = tf.keras.layers.Dense(units=128)(model)
+        model = tf.keras.layers.Dropout(0.2, seed=seed)(model)
+        model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
+
+        model = tf.keras.Model(inputs=[question_model.input, cnn_model.input], outputs=model)
+
+        model.compile(loss=tf.keras.losses.CategoricalCrossentropy(), metrics=["accuracy"], optimizer="adam")
+
+        return model
+
+
 class ConvTransferSelfAttention(object):
     def __init__(self, embedding_size=10):
         self.EMBEDDING_SIZE = embedding_size
 
     def get_image_model(self, img_h, img_w, application_name="vgg16", fine_tuning=True):
-        if application_name == "vgg16":
-            model = tf.keras.applications.vgg16.VGG16(include_top=False,
-                                                      weights='imagenet',
-                                                      input_shape=(img_h, img_w, 3),
-                                                      pooling="avg")
-        elif application_name == "resnet50v2":
-            model: tf.keras.Model = tf.keras.applications.resnet_v2.ResNet50V2(include_top=False, weights='imagenet',
-                                                                               input_shape=(img_h, img_w, 3),
-                                                                               pooling="avg")
-        elif application_name == "inceptionresnetv2":
-            model = tf.keras.applications.inception_resnet_v2.InceptionResNetV2(include_top=False, weights='imagenet',
-                                                                                input_shape=(img_h, img_w, 3),
-                                                                                pooling="avg")
-        else:
-            raise NotImplemented("Transfer from {} model is not implemented.".format(application_name))
+        return _get_transfer_model_(img_w=img_w, img_h=img_h, application_name=application_name,
+                                    fine_tuning=fine_tuning)
 
-        if not fine_tuning:
-            model.trainable = False
-
-        return model
-
-    def get_question_model(self, question_len, wtoi, cnn_model: tf.keras.Model, n_filters_conv=100):
+    def get_question_model(self, question_len, wtoi, cnn_model: tf.keras.Model, n_filters_conv=100, attention_unit=128):
         # ATTENTION MODEL
         question_input = tf.keras.layers.Input(shape=question_len)
         question_embedding = tf.keras.layers.Embedding(len(wtoi) + 1, self.EMBEDDING_SIZE,
@@ -44,15 +86,16 @@ class ConvTransferSelfAttention(object):
                                                  kernel_size=(1, 1),
                                                  padding="same")
         image_features = cnn_layer_image(cnn_model.layers[-2].output)
-        query_value_attention = tf.keras.layers.Attention()([question_embedding, image_features])
+        query_value_attention = tf.keras.layers.Attention(attention_unit)([question_embedding, image_features])
         attention_model = tf.keras.Model(inputs=[question_input, cnn_model.input], outputs=query_value_attention)
 
         return attention_model
 
     def get_model(self, question_len, wtoi, img_h, img_w, seed, fine_tuning=True, application_name="vgg16",
-                  n_conv_filters=1000):
+                  n_conv_filters=1000, attention_unit=128):
         cnn_model = self.get_image_model(img_h, img_w, fine_tuning=fine_tuning, application_name=application_name)
-        attention_model = self.get_question_model(question_len, wtoi, cnn_model, n_filters_conv=n_conv_filters)
+        attention_model = self.get_question_model(question_len, wtoi, cnn_model, n_filters_conv=n_conv_filters,
+                                                  attention_unit=attention_unit)
 
         # TOP NET
         top_net = tf.keras.layers.GlobalAveragePooling2D()(attention_model.output)
@@ -66,30 +109,13 @@ class ConvTransferSelfAttention(object):
 
         return model
 
+
 class ConvImageTransferLSTM(object):
     EMBEDDING_SIZE = 50
 
     def get_image_model(self, img_h, img_w, application_name="vgg16", fine_tuning=True):
-        if application_name == "vgg16":
-            model = tf.keras.applications.vgg16.VGG16(include_top=False,
-                                                      weights='imagenet',
-                                                      input_shape=(img_h, img_w, 3),
-                                                      pooling="avg")
-        elif application_name == "resnet50v2":
-            model: tf.keras.Model = tf.keras.applications.resnet_v2.ResNet50V2(include_top=False, weights='imagenet',
-                                                                               input_shape=(img_h, img_w, 3),
-                                                                               pooling="avg")
-        elif application_name == "inceptionresnetv2":
-            model = tf.keras.applications.inception_resnet_v2.InceptionResNetV2(include_top=False, weights='imagenet',
-                                                                                input_shape=(img_h, img_w, 3),
-                                                                                pooling="avg")
-        else:
-            raise NotImplemented("Transfer from this model is not implemented.")
-
-        if not fine_tuning:
-            model.trainable = False
-
-        return model
+        return _get_transfer_model_(img_w=img_w, img_h=img_h, application_name=application_name,
+                                    fine_tuning=fine_tuning)
 
     def get_question_model(self, question_len, wtoi):
         question_input = tf.keras.layers.Input(shape=question_len)
