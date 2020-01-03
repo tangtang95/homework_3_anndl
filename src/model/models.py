@@ -4,21 +4,130 @@ from datetime import datetime
 
 from src.data.CustomDataGenerator import get_number_of_labels
 
+class RelationNetwork(object):
+    EMBEDDING_SIZE = 50
 
-def _get_transfer_model_(img_h, img_w, application_name, fine_tuning):
+    def get_image_model(self, img_h, img_w):
+        model = tf.keras.models.Sequential()
+        depth_max_pool = 5
+        total_depth = 5
+
+        model.add(tf.keras.layers.Conv2D(filters=16, kernel_size=(3, 3), padding='same',
+                                         input_shape=(img_h, img_w, 3),
+                                         activation='relu'))
+        model.add(tf.keras.layers.MaxPool2D(pool_size=(2, 2)))
+
+        for i in range(1, total_depth):
+            model.add(tf.keras.layers.Conv2D(filters=32 * (2**i), kernel_size=(3, 3), padding='same', activation='relu'))
+            if i <= depth_max_pool:
+                model.add(tf.keras.layers.MaxPool2D(pool_size=(2, 2)))
+
+        return model
+
+    def get_question_model(self, question_len, wtoi):
+        question_input = tf.keras.layers.Input(shape=question_len)
+        lstm_model = tf.keras.layers.Embedding(len(wtoi) + 1, self.EMBEDDING_SIZE,
+                                               input_length=question_len)(question_input)
+        lstm_model = tf.keras.layers.LSTM(256, return_state=False)(lstm_model)
+        lstm_model = tf.keras.Model(inputs=question_input, outputs=lstm_model)
+        return lstm_model
+
+    def get_model(self, question_len, wtoi, img_h, img_w, seed):
+        lstm_model = self.get_question_model(question_len, wtoi)
+        cnn_model = self.get_image_model(img_h, img_w)
+        output_shape = cnn_model.output_shape
+        follow_cnn_model = tf.keras.layers.Reshape(target_shape=(output_shape[1]*output_shape[2], output_shape[3]))(cnn_model.output)
+
+        lambda_layers = []
+        for i in range(output_shape[1]*output_shape[2]):
+            lambda_layer = tf.keras.layers.Lambda(lambda x: x[:, i, :])(follow_cnn_model)
+            lambda_layers.append(lambda_layer)
+
+        concat_layers = []
+        shared_dense_layer = tf.keras.layers.Dense(units=256, activation="relu")
+        for i in range(output_shape[1] * output_shape[2] - 1):
+            for j in range(i+1, output_shape[1] * output_shape[2]):
+                concat_layer = tf.keras.layers.concatenate([lambda_layers[i], lambda_layers[j], lstm_model.output])
+                concat_layer = shared_dense_layer(concat_layer)
+                concat_layers.append(concat_layer)
+        follow_cnn_model = tf.keras.layers.add(concat_layers)
+        model = tf.keras.layers.Dense(units=192, activation="relu")(follow_cnn_model)
+        model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
+
+        model = tf.keras.Model(inputs=[lstm_model.input, cnn_model.input], outputs=model)
+
+        model.compile(loss=tf.keras.losses.CategoricalCrossentropy(), metrics=["accuracy"], optimizer="adam")
+
+        return model
+
+
+class ConvLSTM_LSTM_Network(object):
+    EMBEDDING_SIZE = 50
+
+    def get_image_model(self, img_h, img_w, application_name="vgg16", fine_tuning=True):
+        if application_name == "vgg16":
+            model = tf.keras.applications.vgg16.VGG16(include_top=False,
+                                                      weights='imagenet',
+                                                      input_shape=(img_h, img_w, 3),
+                                                      pooling="None")
+        elif application_name == "resnet50v2":
+            model: tf.keras.Model = tf.keras.applications.resnet_v2.ResNet50V2(include_top=False, weights='imagenet',
+                                                                               input_shape=(img_h, img_w, 3),
+                                                                               pooling="None")
+        elif application_name == "inceptionresnetv2":
+            model = tf.keras.applications.inception_resnet_v2.InceptionResNetV2(include_top=False, weights='imagenet',
+                                                                                input_shape=(img_h, img_w, 3),
+                                                                                pooling="None")
+        else:
+            raise NotImplemented("Transfer from this model is not implemented.")
+
+        if not fine_tuning:
+            model.trainable = False
+        return model
+
+    def get_question_model(self, question_len, wtoi):
+        question_input = tf.keras.layers.Input(shape=question_len)
+        lstm_model = tf.keras.layers.Embedding(len(wtoi) + 1, self.EMBEDDING_SIZE,
+                                               input_length=question_len)(question_input)
+        lstm_model = tf.keras.layers.LSTM(128, return_sequences=True, stateful=False)(lstm_model)
+        lstm_model = tf.keras.layers.LSTM(128, return_sequences=False, stateful=False)(lstm_model)
+        lstm_model = tf.keras.Model(inputs=question_input, outputs=lstm_model)
+        return lstm_model
+
+    def get_model(self, question_len, wtoi, img_h, img_w, batch_size, seed, fine_tuning=True, application_name="vgg16"):
+        cnn_model = self.get_image_model(img_h, img_w, fine_tuning=fine_tuning, application_name=application_name)
+        output_shape = cnn_model.output_shape
+        follow_cnn_model = tf.keras.layers.Reshape(target_shape=(output_shape[1]*output_shape[2], output_shape[3]))(cnn_model.output)
+        follow_cnn_model = tf.keras.layers.LSTM(units=256, return_state=False)(follow_cnn_model)
+
+        lstm_model = self.get_question_model(question_len, wtoi)
+
+        model = tf.keras.layers.concatenate([follow_cnn_model, lstm_model.output])
+        model = tf.keras.layers.Dense(units=256, activation="relu")(model)
+        model = tf.keras.layers.Dropout(0.2, seed=seed)(model)
+        model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
+
+        model = tf.keras.Model(inputs=[lstm_model.input, cnn_model.input], outputs=model)
+
+        model.compile(loss=tf.keras.losses.CategoricalCrossentropy(), metrics=["accuracy"], optimizer="adam")
+
+        return model
+
+
+def _get_transfer_model_(img_h, img_w, application_name, fine_tuning, pooling="avg"):
     if application_name == "vgg16":
         model = tf.keras.applications.vgg16.VGG16(include_top=False,
                                                   weights='imagenet',
                                                   input_shape=(img_h, img_w, 3),
-                                                  pooling="avg")
+                                                  pooling=pooling)
     elif application_name == "resnet50v2":
         model: tf.keras.Model = tf.keras.applications.resnet_v2.ResNet50V2(include_top=False, weights='imagenet',
                                                                            input_shape=(img_h, img_w, 3),
-                                                                           pooling="avg")
+                                                                           pooling=pooling)
     elif application_name == "inceptionresnetv2":
         model = tf.keras.applications.inception_resnet_v2.InceptionResNetV2(include_top=False, weights='imagenet',
                                                                             input_shape=(img_h, img_w, 3),
-                                                                            pooling="avg")
+                                                                            pooling=pooling)
     else:
         raise NotImplemented("Transfer from {} model is not implemented.".format(application_name))
 
@@ -130,7 +239,7 @@ class ConvImageTransferLSTM(object):
         lstm_model = self.get_question_model(question_len, wtoi)
 
         model = tf.keras.layers.concatenate([cnn_model.output, lstm_model.output])
-        model = tf.keras.layers.Dense(units=128)(model)
+        model = tf.keras.layers.Dense(units=128, activation="relu")(model)
         model = tf.keras.layers.Dropout(0.2, seed=seed)(model)
         model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
 
@@ -178,7 +287,7 @@ class ConvRecurrentNetworkExpFilters(object):
         lstm_model = self.get_question_model(question_len, wtoi)
 
         model = tf.keras.layers.concatenate([cnn_model.output, lstm_model.output])
-        model = tf.keras.layers.Dense(units=128)(model)
+        model = tf.keras.layers.Dense(units=128, activation="relu")(model)
         model = tf.keras.layers.Dropout(0.2, seed=seed)(model)
         model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
 
@@ -223,7 +332,7 @@ class ConvRecurrentNetwork(object):
         lstm_model = self.get_question_model(question_len, wtoi)
 
         model = tf.keras.layers.concatenate([cnn_model.output, lstm_model.output])
-        model = tf.keras.layers.Dense(units=128)(model)
+        model = tf.keras.layers.Dense(units=128, activation="relu")(model)
         model = tf.keras.layers.Dropout(0.2, seed=seed)(model)
         model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
 
