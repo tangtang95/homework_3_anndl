@@ -68,7 +68,7 @@ class CustomTrainValidGenerator(object):
         image_filename_list = []
         label_list = []
         for question in questions_list:
-            question_string_list.append("<sos> " + question['question'] + " <eos>")
+            question_string_list.append("sos {} eos".format(question['question']))
 
             image_filepath = os.path.join(self.image_directory, question['image_filename'])
             image_filename_list.append(image_filepath)

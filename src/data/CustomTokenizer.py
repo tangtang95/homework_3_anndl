@@ -17,7 +17,7 @@ class CustomTokenizer(object):
         with open(train_file_path, "r") as train_file:
             questions_list = json.load(train_file)['questions']
         all_train_questions = [question_dict['question'].replace("?", "") for question_dict in questions_list]
-        all_train_questions.append(["<sos>", "<eos>"])
+        all_train_questions.append(["sos", "eos"])
 
         self.tokenizer = Tokenizer(num_words=MAX_NUM_WORDS, oov_token=True)
         self.tokenizer.fit_on_texts(all_train_questions)
