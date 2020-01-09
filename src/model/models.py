@@ -5,7 +5,8 @@ from datetime import datetime
 from src.data.CustomDataGenerator import get_number_of_labels
 
 
-def _get_transfer_model_(img_h, img_w, application_name, fine_tuning, pooling):
+def _get_transfer_model_(img_h, img_w, application_name="vgg16", fine_tuning=False, pooling=None,
+                         add_final_conv_layer=True):
     if application_name == "vgg16":
         model = tf.keras.applications.vgg16.VGG16(include_top=False,
                                                   weights='imagenet',
@@ -31,6 +32,13 @@ def _get_transfer_model_(img_h, img_w, application_name, fine_tuning, pooling):
 
     if not fine_tuning:
         model.trainable = False
+
+    if add_final_conv_layer and pooling is None and application_name == "vgg16":
+        new_conv = tf.keras.layers.Conv2D(filters=512, kernel_size=(3, 3), padding='same',
+                                          input_shape=(img_h, img_w, 3),
+                                          activation='relu')(model.layers[-1].output)
+        final_pooling = tf.keras.layers.GlobalAveragePooling2D()(new_conv)
+        model = tf.keras.Model(inputs=model.input, outputs=final_pooling)
 
     return model
 
@@ -153,9 +161,12 @@ class TransferBidirectionalGRU(object):
     def __init__(self, embedding_size=25):
         self.EMBEDDING_SIZE = embedding_size
 
-    def get_image_model(self, img_h, img_w, application_name="vgg16", fine_tuning=True):
+    def get_image_model(self, img_h, img_w, application_name="vgg16", fine_tuning=True,
+                        add_final_conv_layer=True, pooling="avg"):
         return _get_transfer_model_(img_w=img_w, img_h=img_h, application_name=application_name,
-                                    fine_tuning=fine_tuning)
+                                    fine_tuning=fine_tuning,
+                                    add_final_conv_layer=add_final_conv_layer,
+                                    pooling=pooling)
 
     def get_question_model(self, question_len, wtoi, n_units):
         # ATTENTION MODEL
@@ -169,13 +180,17 @@ class TransferBidirectionalGRU(object):
         bidirectional_model = tf.keras.Model(inputs=question_input, outputs=bidirectional)
         return bidirectional_model
 
-    def get_model(self, question_len, wtoi, img_h, img_w, seed, n_unit_dense=128, n_units_question=512,
-                  application_name="vgg16", fine_tuning=False, dropout_rate=0.2):
-        cnn_model = self.get_image_model(img_h, img_w, application_name=application_name, fine_tuning=fine_tuning)
+    def get_model(self, question_len, wtoi, img_h, img_w, seed, n_unit_dense=128, n_units_question=256,
+                  application_name="vgg16", fine_tuning=False, dropout_rate=0.2, activation=None,
+                  add_final_conv_layer=True, pooling=None):
+        cnn_model = self.get_image_model(img_h, img_w, application_name=application_name, fine_tuning=fine_tuning,
+                                         add_final_conv_layer=add_final_conv_layer,
+                                         pooling=pooling)
         question_model = self.get_question_model(question_len, wtoi, n_units=n_units_question)
 
         model = tf.keras.layers.concatenate([cnn_model.output, question_model.output])
-        model = tf.keras.layers.Dense(units=n_unit_dense, activation="relu")(model)  # Activation has been set after fix
+        model = tf.keras.layers.Dense(units=n_unit_dense, activation=activation)(
+            model)  # Activation has been set after fix
         model = tf.keras.layers.Dropout(rate=dropout_rate, seed=seed)(model)
         model = tf.keras.layers.Dense(units=get_number_of_labels(), activation="softmax")(model)
 
